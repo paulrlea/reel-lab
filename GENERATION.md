@@ -1,6 +1,6 @@
 # Automatic reel generation — phases 1–4
 
-Reel Lab can now turn tagged original footage into a finished, unapproved Reel draft: select footage according to an account profile, create a constrained editing plan, render clips in sequence, overlay text, and write the caption and relevant hashtags. It does not publish or approve generated drafts. Music retrieval, beat matching, animated subtitles, and performance-driven optimization are separate future phases.
+Reel Lab can now turn tagged original footage into a finished, unapproved Reel draft: select footage according to an account profile, create a constrained editing plan, render clips in sequence, overlay text, and write the caption and relevant hashtags. It does not publish or approve generated drafts. Optional music selection, mixing and beat matching are described in [AUDIO.md](AUDIO.md); animated subtitles remain a future phase.
 
 ## 1. Prepare the account profile
 
@@ -16,7 +16,7 @@ Copy-Item profile.example.json data\my-account.json
 & ".\Reel Lab.cmd" profile-show my-account
 ```
 
-You can use multiple creative profiles; the generation worker uses one at a time. The default length is 7–30 seconds, up to four distinct source clips and five hashtags. Music preference is stored for the next audio phase. The profile is stored in `data/profiles`, excluded from Git.
+You can use multiple creative profiles; the generation worker uses one at a time. The default length is 7–30 seconds, up to four distinct source clips and five hashtags. Configure the optional soundtrack mode and music preferences as described in [AUDIO.md](AUDIO.md). The profile is stored in `data/profiles`, excluded from Git.
 
 ## 2. Analyze original footage
 

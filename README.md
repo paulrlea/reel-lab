@@ -35,12 +35,13 @@ flowchart TD
 * `report --ai` asks the local model to interpret available metric samples and propose further experiments. It does not automatically repost videos or publish suggestions.
 * `dashboard.py` is an optional localhost-only review interface. Keep the command-line worker running separately.
 * `profile-import`, `generate`, and `generate-worker` implement the first four automatic reel generation phases: account profiles, footage analysis, AI edit plans, and multi-clip rendering. Start with [GENERATION.md](GENERATION.md). Existing vision-tagged footage remains compatible.
+* Phase 5 adds official Instagram music discovery, outdoor Reel reference research, local licensed audio registration, AI soundtrack selection, local mixing and beat-aligned cuts, and same-age music analytics. See [AUDIO.md](AUDIO.md). Native music is opt-in; existing profiles keep music off until configured.
 
 ## Status and limitations
 
 The Instagram adapter uses the container-create/upload/status/publish pattern. Trial request fields and resumable upload compatibility depend on the account, API version and login type. Live publication is an integration to validate with one authorized Trial Reel; no normal-Reel fallback is implemented. The current test suite mocks external API responses and cannot establish actual account eligibility or API acceptance. There is no browser automation, credential scraping, auto-following, unsolicited messaging, or engagement manipulation.
 
-This version creates vertical clips from provided footage, not AI-generated video. It analyzes sampled frames and optional speech transcripts, not every frame. It doesn't automatically create synchronized subtitles, generate imagery, retrieve music, or promote trials itself; use Instagram's own automatic promotion setting if desired. Human approval is required for each live draft. The local model can suggest but cannot execute arbitrary tools or commands.
+This version creates vertical clips from provided footage, not AI-generated video. It analyzes sampled frames and optional speech transcripts, not every frame. It doesn't automatically create synchronized subtitles, generate imagery, or promote trials itself; use Instagram's own automatic promotion setting if desired. Local licensed music supports full preview; native Instagram music is added on publication and cannot be previewed locally. Human approval is required for each live draft. The local model can suggest but cannot execute arbitrary tools or commands.
 
 ## Test
 

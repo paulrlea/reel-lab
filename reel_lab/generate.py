@@ -8,6 +8,8 @@ from . import footage, director, editor
 from .media import fingerprint
 from .store import scheduled
 from .ai import caption_valid
+from .audio import AudioCatalog, choose
+from .beats import snap_plan
 
 
 def generate(config, store, profile, due, *, allow_reuse=False):
@@ -15,13 +17,20 @@ def generate(config, store, profile, due, *, allow_reuse=False):
     used=() if allow_reuse else store.used_sources()
     available=director.candidates(footage.export(config.data/'footage.sqlite3'),profile,used)
     plan=director.plan(config,profile,available)
+    audio=choose(config,store,profile,plan,available,AudioCatalog(config.data)) if profile.audio_mode!='off' else None
+    if audio:
+        audio['beat_shifts']=[]
+        if audio['source']=='local' and audio['beat_sync'] and audio.get('confidence',0)>=.65:
+            plan,audio['beat_shifts']=snap_plan(plan,available,audio['beats'],audio['offset'])
+        audio['requested_duration']=plan['duration']
     out=config.data/'rendered'/(uuid.uuid4().hex+'.mp4')
     sources=[{'id':clip['id'],'path':available[clip['id']]['path'],'sha256':available[clip['id']]['sha256']}
              for clip in plan['clips']]
     caption=caption_valid(plan['caption']+('\n\n'+' '.join(plan['hashtags']) if plan['hashtags'] else ''))
     try:
-        editor.render_plan(available,plan,out)
-        return store.add_generated(out,fingerprint(out),caption,plan['concept'],plan['hypothesis'],due,asdict(profile),plan,sources,allow_reuse=allow_reuse)
+        if audio: editor.render_plan(available,plan,out,audio=audio)
+        else: editor.render_plan(available,plan,out)
+        return store.add_generated(out,fingerprint(out),caption,plan['concept'],plan['hypothesis'],due,asdict(profile),plan,sources,allow_reuse=allow_reuse,audio=audio)
     except sqlite3.IntegrityError:
         out.unlink(missing_ok=True)
         raise ValueError('An identical rendered video is already queued') from None

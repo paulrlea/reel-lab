@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import json
 import sqlite3
+import math
 
 
 def now():
@@ -33,7 +34,8 @@ class Store:
             PRIMARY KEY(job_id,age));
         CREATE TABLE IF NOT EXISTS generated_plans (
             job_id INTEGER PRIMARY KEY REFERENCES jobs(id), profile TEXT NOT NULL,
-            profile_json TEXT NOT NULL, plan_json TEXT NOT NULL, sources_json TEXT NOT NULL);''')
+            profile_json TEXT NOT NULL, plan_json TEXT NOT NULL, sources_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS job_audio (job_id INTEGER PRIMARY KEY REFERENCES jobs(id), metadata TEXT NOT NULL);''')
 
     @contextmanager
     def transaction(self):
@@ -50,7 +52,7 @@ class Store:
             cur = self.db.execute('INSERT INTO jobs(path,hash,caption,brief,hypothesis,trial,due,created,video_url) VALUES(?,?,?,?,?,?,?,?,?)', (str(path), digest, caption, brief, hypothesis, trial, scheduled(due), now(), url))
             return cur.lastrowid
 
-    def add_generated(self,path,digest,caption,brief,hypothesis,due,profile,plan,sources,*,allow_reuse=False):
+    def add_generated(self,path,digest,caption,brief,hypothesis,due,profile,plan,sources,*,allow_reuse=False,audio=None):
         with self.transaction():
             if not allow_reuse and self.used_sources() & {item['sha256'] for item in sources}:
                 raise ValueError('Footage was already used by another generated draft')
@@ -59,7 +61,37 @@ class Store:
             id=cur.lastrowid
             self.db.execute('INSERT INTO generated_plans VALUES(?,?,?,?,?)',
                 (id,profile['name'],json.dumps(profile),json.dumps(plan),json.dumps(sources)))
+            if audio: self.db.execute('INSERT INTO job_audio VALUES(?,?)',(id,json.dumps(audio)))
             return id
+
+    def audio(self,id):
+        row=self.db.execute('SELECT metadata FROM job_audio WHERE job_id=?',(id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def audio_report(self,profile=None,age=72):
+        if age not in (24,72): raise ValueError('Age must be 24 or 72 hours')
+        query='''SELECT g.profile,m.data,a.metadata FROM metrics m JOIN jobs j ON j.id=m.job_id
+                 JOIN generated_plans g ON g.job_id=j.id LEFT JOIN job_audio a ON a.job_id=j.id
+                 WHERE j.state='published' AND j.mode='live' AND m.age=?'''
+        params=[age]
+        if profile: query+=' AND g.profile=?'; params.append(profile)
+        groups={}
+        for row in self.db.execute(query,params):
+            audio=json.loads(row['metadata']) if row['metadata'] else {'key':'none','title':'No added music','source':'none'}
+            key=(row['profile'],audio['key']); g=groups.setdefault(key,{'profile':row['profile'],'key':audio['key'],
+                'title':audio['title'],'source':audio['source'],'age':age,'records':0,'rates':[],'views':[]})
+            g['records']+=1; values=json.loads(row['data']); views=values.get('views')
+            valid=lambda x:type(x) in (int,float) and math.isfinite(x) and x>=0
+            if valid(views) and views>0:
+                g['views'].append(views); interactions=[values.get(k) for k in ('likes','comments','shares','saved')]
+                if all(valid(x) for x in interactions): g['rates'].append(sum(interactions)/views)
+        result=[]
+        for g in groups.values():
+            rates=g.pop('rates'); views=g.pop('views'); g['samples']=len(rates)
+            g['mean_interactions_per_view']=round(sum(rates)/len(rates),6) if rates else None
+            g['mean_views']=round(sum(views)/len(views),2) if views else None
+            result.append(g)
+        return sorted(result,key=lambda g:(g['profile'],g['key']))
 
     def generated(self,id):
         row=self.db.execute('SELECT * FROM generated_plans WHERE job_id=?',(id,)).fetchone()
@@ -79,8 +111,17 @@ class Store:
             raise ValueError('Unknown job')
         return dict(row)
 
-    def approve(self, id):
+    def approve(self, id, *, native_audio_reviewed=False):
         with self.db:
+            audio=self.audio(id)
+            if audio:
+                from .audio import AudioCatalog
+                if not AudioCatalog(self.config.data).is_enabled(audio['key']):
+                    raise ValueError('Soundtrack is disabled or missing from the audio catalog')
+            if audio and audio['source']=='native':
+                if not native_audio_reviewed: raise ValueError('Review native music title, volumes and no-preview limitation before approval')
+                if not self.config.dry_run and (not self.config.allow_native_audio or audio['account']!=self.config.user_id or self.config.login!='facebook'):
+                    raise ValueError('Native audio is disabled or belongs to another account')
             if self.db.execute("UPDATE jobs SET state='approved',mode=? WHERE id=? AND state='draft'", ('dry' if self.config.dry_run else 'live', id)).rowcount != 1:
                 raise ValueError('Only draft jobs may be approved')
 
@@ -111,7 +152,7 @@ class Store:
             if row is None:
                 return None
             self.db.execute("UPDATE jobs SET state='publishing',started=?,mode=? WHERE id=?", (t, mode, row['id']))
-            return dict(row)
+            job=dict(row); job['audio']=self.audio(job['id']); return job
 
     def finish(self, id, state, media_id=None, error=None):
         with self.db:

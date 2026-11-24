@@ -9,11 +9,12 @@ from reel_lab.instagram import Instagram
 from reel_lab.profile import Profile, profiles, load_profile, save_profile
 from reel_lab.generate import generate
 from reel_lab import footage
+from reel_lab.audio import AudioCatalog, OUTDOOR_ACCOUNTS
 
 st.set_page_config(page_title='Reel Lab', layout='wide')
 c = Config.load(); s = Store(c)
 st.title('Reel Lab — Trial Reel Manager')
-st.warning('DRY RUN — no Instagram requests' if c.dry_run else 'LIVE MODE — approved jobs can publish')
+st.warning('DRY RUN — no publishing requests; explicit audio research is read-only' if c.dry_run else 'LIVE MODE — approved jobs can publish')
 st.caption('Keep this dashboard bound to localhost. Run the worker separately.')
 st.subheader('Account creative profiles')
 existing_profiles=profiles(c.data)
@@ -26,7 +27,12 @@ with st.form('creative-profile-'+selected):
     tone=st.text_input('Tone',value=saved.tone if saved else 'Natural and concise',max_chars=1000)
     categories=st.text_input('Content categories',value=saved.categories if saved else '',max_chars=1000)
     style=st.text_input('Editing style',value=saved.editing_style if saved else 'Clean, fast-paced cuts',max_chars=1000)
-    music=st.text_input('Music preferences (for a future audio phase)',value=saved.music_preferences if saved else '',max_chars=1000)
+    music=st.text_input('Music preferences',value=saved.music_preferences if saved else '',max_chars=1000)
+    modes=('off','local','native','auto'); mixes=('auto','cinematic','dialogue','natural')
+    audio_mode=st.selectbox('Soundtrack source',modes,index=modes.index(saved.audio_mode) if saved else 0)
+    mix_style=st.selectbox('Audio mix preset',mixes,index=mixes.index(saved.mix_style) if saved else 0)
+    beat_sync=st.checkbox('Align cuts to detected beats for local music',value=saved.beat_sync if saved else True)
+    require_ads=st.checkbox('Require advertising eligibility (recommended for brands)',value=saved.require_ad_eligible if saved else True)
     restricted=st.text_area('Restricted topics / privacy rules',value=saved.restricted_topics if saved else '',max_chars=1000)
     minimum=st.number_input('Minimum seconds',3,90,saved.min_duration if saved else 7)
     maximum=st.number_input('Maximum seconds',3,90,saved.max_duration if saved else 30)
@@ -36,9 +42,69 @@ with st.form('creative-profile-'+selected):
         try:
             p=Profile.parse(dict(name=name,description=description,audience=audience,tone=tone,categories=categories,
                 editing_style=style,music_preferences=music,restricted_topics=restricted,min_duration=int(minimum),
-                max_duration=int(maximum),max_clips=int(clips),max_hashtags=int(hashtags)))
+                max_duration=int(maximum),max_clips=int(clips),max_hashtags=int(hashtags),audio_mode=audio_mode,
+                mix_style=mix_style,beat_sync=beat_sync,require_ad_eligible=require_ads))
             save_profile(c.data,p); st.rerun()
         except ValueError as exc: st.error(str(exc))
+
+st.subheader('Audio research and music library')
+music_catalog=AudioCatalog(c.data)
+with st.expander('Discover Instagram audio (explicit read-only API call)'):
+    st.caption('Requires Facebook Login and an authorized token. Blank query means general trending audio, not outdoor-specific popularity.')
+    with st.form('discover-audio'):
+        query=st.text_input('Track/artist search (leave blank for trending)')
+        kind=st.selectbox('Catalog',('music','original_sound'))
+        if st.form_submit_button('Search Instagram'):
+            try:
+                found=music_catalog.discover(c,query,kind); st.success(f'Saved {len(found)} results.')
+                st.dataframe([{k:t.get(k) for k in ('key','title','artist','duration','ads_eligible')} for t in found])
+            except Exception as exc: st.error(f'Audio discovery failed: {str(exc) if isinstance(exc,ValueError) else type(exc).__name__}')
+    st.dataframe(music_catalog.discoveries()[:50])
+with st.expander('Outdoor Reel research'):
+    st.caption('Public professional-account metadata does not identify an exact song. Open the Reel and record its observed audio label yourself.')
+    for account in OUTDOOR_ACCOUNTS: st.write(f'[@{account}](https://www.instagram.com/{account}/)')
+    with st.form('research-public'):
+        account=st.text_input('Public professional Instagram username',value='mammut')
+        if st.form_submit_button('Read recent public Reel metadata'):
+            try: st.dataframe(music_catalog.research(c,account))
+            except Exception as exc: st.error(f'Research unavailable ({type(exc).__name__}); open reference Reels manually.')
+    st.dataframe(music_catalog.research_posts()[:100])
+    with st.form('observed-audio'):
+        url=st.text_input('Observed Reel permalink')
+        account=st.text_input('Creator username')
+        title=st.text_input('Observed audio title')
+        artist=st.text_input('Observed artist')
+        tags=st.text_input('Mood, genre or footage category')
+        key=st.text_input('Optional matching catalog track key')
+        if st.form_submit_button('Record observed soundtrack'):
+            try: music_catalog.add_reference(url,account,title,artist,tags,key); st.rerun()
+            except ValueError as exc: st.error(str(exc))
+    st.dataframe(music_catalog.references())
+with st.expander('Register a licensed local track'):
+    with st.form('local-track'):
+        path=st.text_input('Local audio file path')
+        title=st.text_input('Song title'); artist=st.text_input('Artist')
+        tags=st.text_input('Mood, genre, footage style')
+        note=st.text_area('License source and commercial synchronization permission')
+        rights=st.checkbox('I have verified rights to combine this audio with commercial brand videos')
+        ads=st.checkbox('My license also allows advertising')
+        offset=st.number_input('Music start offset (seconds)',min_value=0.0,value=0.0)
+        if st.form_submit_button('Analyze and register track'):
+            try:
+                music_catalog.register_local(path,title,artist,tags,note,rights_confirmed=rights,ads_eligible=ads,offset=float(offset)); st.rerun()
+            except Exception as exc: st.error(f'Import failed: {str(exc) if isinstance(exc,ValueError) else type(exc).__name__}')
+    tracks=music_catalog.tracks()
+    st.dataframe([{k:t.get(k) for k in ('key','title','artist','source','tags','duration','bpm','confidence','ads_eligible','enabled')} for t in tracks])
+    if tracks:
+        with st.form('disable-track'):
+            track_key=st.selectbox('Manage a soundtrack',[t['key'] for t in tracks])
+            enabled=st.checkbox('Enable after verifying rights; uncheck to disable')
+            if st.form_submit_button('Save soundtrack availability'):
+                music_catalog.set_enabled(track_key,enabled); st.rerun()
+with st.expander('Audio performance — equal-age descriptive comparisons'):
+    age=st.selectbox('Metric snapshot age (hours)',(72,24))
+    st.caption('Not a causal comparison. Missing interaction metrics are excluded; small samples do not influence music ranking.')
+    st.dataframe(s.audio_report(age=age))
 
 st.subheader('Automatic reel generation')
 catalog=footage.export(c.data/'footage.sqlite3')
@@ -83,6 +149,12 @@ for j in s.rows():
         if generation:
             st.caption('Generated from account: '+generation['profile']['name'])
             st.json(generation['plan'],expanded=False)
+        selected_audio=s.audio(j['id'])
+        if selected_audio:
+            st.write('Soundtrack:',selected_audio['title'],selected_audio['artist'],selected_audio['source'])
+            st.caption(f"Music {selected_audio['music_volume']}%, original {selected_audio['video_volume']}%; {selected_audio['mix_style']} mix; {len(selected_audio.get('beat_shifts',[]))} aligned cuts")
+            st.caption(selected_audio.get('reason',''))
+            if selected_audio['source']=='native': st.warning('Instagram adds this music at publication. The local preview does not include the native soundtrack.')
         if j['state'] == 'draft':
             st.video(j['path'])
             with st.form('edit'+str(j['id'])):
@@ -91,9 +163,13 @@ for j in s.rows():
                 if st.form_submit_button('Save changes'):
                     s.edit(j['id'], caption_valid(new_caption), new_due); st.rerun()
             confirm = st.checkbox('I reviewed the actual video, caption and trial settings', key=f"review-{j['id']}")
-            if st.button('Approve', key=f"approve-{j['id']}", disabled=not confirm):
-                if not c.dry_run: Instagram(c)
-                s.approve(j['id']); st.rerun()
+            native_review=not selected_audio or selected_audio['source']!='native'
+            if not native_review: native_review=st.checkbox('I reviewed the native track and volume; I understand the final soundtrack cannot be previewed locally',key=f"native-review-{j['id']}")
+            if st.button('Approve', key=f"approve-{j['id']}", disabled=not (confirm and native_review)):
+                try:
+                    if not c.dry_run: Instagram(c)
+                    s.approve(j['id'],native_audio_reviewed=native_review); st.rerun()
+                except ValueError as exc: st.error(str(exc))
         if j['state'] in ('draft','approved') and st.button('Cancel', key=f"cancel-{j['id']}"):
             s.cancel(j['id']); st.rerun()
         if j['mode'] == 'dry' and j['state'] in ('simulated','approved') and st.button('Return to draft', key=f"reset-{j['id']}"):

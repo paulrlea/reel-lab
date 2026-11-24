@@ -1,6 +1,7 @@
 import logging
 from .instagram import Instagram, PublishUncertain
 from .media import fingerprint
+from .audio import AudioCatalog
 
 log = logging.getLogger(__name__)
 
@@ -13,6 +14,8 @@ def tick(config, store, client=None):
         try:
             if fingerprint(job['path']) != job['hash']:
                 raise ValueError('Approved video has changed')
+            if job.get('audio') and not AudioCatalog(config.data).is_enabled(job['audio']['key']):
+                raise ValueError('Approved soundtrack is disabled or missing')
             if config.dry_run:
                 store.finish(job['id'], 'simulated')
             else:

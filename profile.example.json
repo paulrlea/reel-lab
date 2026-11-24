@@ -5,10 +5,14 @@
   "tone": "Natural, concise, entertaining",
   "categories": "Describe recurring themes and subjects.",
   "editing_style": "Clean, short cuts; simple readable text overlays",
-  "music_preferences": "Upbeat instrumental (future audio phase)",
+  "music_preferences": "Upbeat instrumental",
   "restricted_topics": "Private information, sensitive footage, unverified claims",
   "min_duration": 7,
   "max_duration": 30,
   "max_clips": 4,
-  "max_hashtags": 5
+  "max_hashtags": 5,
+  "audio_mode": "off",
+  "mix_style": "auto",
+  "beat_sync": true,
+  "require_ad_eligible": true
 }

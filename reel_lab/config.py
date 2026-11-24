@@ -19,6 +19,7 @@ class Config:
     token: str = ""
     upload: str = "resumable"
     media_base: str = ""
+    allow_native_audio: bool = False
 
     @classmethod
     def load(cls):
@@ -36,7 +37,7 @@ class Config:
             if value not in ('true', 'false'):
                 raise ValueError(f'{k} must be true or false')
             return value == 'true'
-        c = cls(Path(get('DATA_DIR', 'data')).resolve(), get('OLLAMA_MODEL', 'qwen3:1.7b'), get('OLLAMA_URL', 'http://127.0.0.1:11434'), flag('DRY_RUN', 'true'), flag('ALLOW_LIVE_TRIALS', 'false'), int(get('MAX_PER_DAY', '2')), float(get('MIN_INTERVAL_HOURS', '6')), get('IG_LOGIN', 'facebook'), get('IG_API_VERSION', 'v27.0'), get('IG_USER_ID'), get('IG_ACCESS_TOKEN'), get('IG_UPLOAD', 'resumable'), get('MEDIA_BASE_URL'))
+        c = cls(Path(get('DATA_DIR', 'data')).resolve(), get('OLLAMA_MODEL', 'qwen3:1.7b'), get('OLLAMA_URL', 'http://127.0.0.1:11434'), flag('DRY_RUN', 'true'), flag('ALLOW_LIVE_TRIALS', 'false'), int(get('MAX_PER_DAY', '2')), float(get('MIN_INTERVAL_HOURS', '6')), get('IG_LOGIN', 'facebook'), get('IG_API_VERSION', 'v27.0'), get('IG_USER_ID'), get('IG_ACCESS_TOKEN'), get('IG_UPLOAD', 'resumable'), get('MEDIA_BASE_URL'), flag('ALLOW_NATIVE_AUDIO','false'))
         if not 1 <= c.max_per_day <= 10 or not 0 <= c.min_interval <= 24:
             raise ValueError('Use MAX_PER_DAY 1–10 and MIN_INTERVAL_HOURS 0–24')
         if c.login not in ('facebook', 'instagram') or c.upload not in ('resumable', 'url') or not re.fullmatch(r'v\d+\.\d+', c.version):

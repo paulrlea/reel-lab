@@ -3,6 +3,7 @@ import time
 from urllib.parse import urlencode, urlsplit, quote
 from pathlib import Path
 from .net import request, RemoteError
+from .audio import NativeAudio
 
 
 class PublishUncertain(RuntimeError):
@@ -30,6 +31,15 @@ class Instagram:
         if job['trial'] not in ('MANUAL', 'SS_PERFORMANCE'):
             raise ValueError('Invalid trial strategy')
         body = {'media_type':'REELS', 'caption':job['caption'], 'trial_params':{'graduation_strategy': job['trial']}}
+        music=job.get('audio')
+        if music and music['source']=='native':
+            if not self.c.allow_native_audio or self.c.login!='facebook' or music['account']!=self.c.user_id:
+                raise ValueError('Native audio is disabled or belongs to another account')
+            NativeAudio(self.c).verify(music['audio_id'],music['requested_duration'],music['require_ads'])
+            music_volume,video_volume=music['music_volume'],music['video_volume']
+            if any(type(v) is not int or not 1<=v<=100 for v in (music_volume,video_volume)):
+                raise ValueError('Invalid native volume')
+            body['audio_configuration']={'audio_id':music['audio_id'],'audio_volume':music_volume,'video_volume':video_volume}
         if self.c.upload == 'resumable':
             body['upload_type'] = 'resumable'
         else:

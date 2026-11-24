@@ -14,12 +14,16 @@ class Profile:
     tone: str = 'Natural and concise'
     categories: str = ''
     editing_style: str = 'Clean, fast-paced cuts'
-    music_preferences: str = ''  # Reserved for the future audio-selection phase.
+    music_preferences: str = ''
     restricted_topics: str = ''
     min_duration: int = 7
     max_duration: int = 30
     max_clips: int = 4
     max_hashtags: int = 5
+    audio_mode: str = 'off'
+    mix_style: str = 'auto'
+    beat_sync: bool = True
+    require_ad_eligible: bool = True
 
     @classmethod
     def parse(cls, data):
@@ -43,6 +47,10 @@ class Profile:
                 raise ValueError(f'{key} must be an integer from {low} to {high}')
         if p.min_duration > p.max_duration:
             raise ValueError('Minimum duration exceeds maximum duration')
+        if p.audio_mode not in ('off','local','native','auto') or p.mix_style not in ('auto','cinematic','dialogue','natural'):
+            raise ValueError('Invalid audio mode or mix style')
+        if type(p.beat_sync) is not bool or type(p.require_ad_eligible) is not bool:
+            raise ValueError('Audio flags must be booleans')
         return p
 
 

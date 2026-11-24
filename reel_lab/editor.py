@@ -39,7 +39,29 @@ def _normalize(source, clip, target, metadata):
     _run(args)
 
 
-def render_plan(available, plan, target):
+def mix_local_audio(video, audio, target, duration):
+    source=Path(audio['path']).resolve(strict=True)
+    if not audio.get('rights_confirmed') or fingerprint(source)!=audio['sha256']:
+        raise ValueError('Local track rights or file hash changed; register it again')
+    if audio['duration']-audio['offset']<duration:
+        raise ValueError('Track is shorter than reel')
+    for value in (audio['music_volume'],audio['video_volume']):
+        if type(value) is not int or not 1<=value<=100: raise ValueError('Invalid mix volume')
+    fade=min(.5,duration/4)
+    # Maintain dialogue intelligibility; the original is also the side-chain key.
+    filters=(f"[0:a]aresample=48000,volume={audio['video_volume']/100}[original];"
+             f"[1:a]aresample=48000,volume={audio['music_volume']/100},afade=t=in:d={fade},"
+             f"afade=t=out:st={duration-fade}:d={fade}[music];")
+    if audio['mix_style']=='dialogue':
+        filters+='[original]asplit=2[voice][side];[music][side]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=250[bed];[voice][bed]'
+    else: filters+='[original][music]'
+    filters+='amix=inputs=2:duration=first:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11[out]'
+    _run(['-i',str(video),'-ss',str(audio['offset']),'-i',str(source),'-t',str(duration),'-filter_complex',filters,
+        '-map','0:v:0','-map','[out]','-c:v','copy','-c:a','aac','-ar','48000','-ac','2','-movflags','+faststart',str(target)])
+    if fingerprint(source)!=audio['sha256']: raise ValueError('Music changed while rendering')
+
+
+def render_plan(available, plan, target, *, audio=None):
     """Render only IDs and bounded times already validated by the director."""
     target=Path(target).resolve(); target.parent.mkdir(parents=True,exist_ok=True)
     if target.exists(): raise ValueError('Render target already exists')
@@ -76,6 +98,10 @@ def render_plan(available, plan, target):
             result=work/'final.mp4'
             _run(['-i',joined.name,'-vf',','.join(filters),'-c:v','libx264','-preset','fast','-crf','23',
                   '-c:a','copy','-movflags','+faststart',result.name],cwd=work)
+        if audio and audio['source']=='local':
+            mixed=work/'mixed.mp4'
+            mix_local_audio(result,audio,mixed,plan['duration'])
+            result=mixed
         output=probe_video(result)
         if (output['width'],output['height'])!=(1080,1920) or not output['has_audio']:
             raise ValueError('Rendered dimensions or audio failed validation')
