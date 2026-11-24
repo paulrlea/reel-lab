@@ -34,12 +34,13 @@ flowchart TD
 * `tick` runs one scheduling cycle; `worker` repeats it. An atomic SQLite claim, rolling daily cap and spacing rule limit attempts. Exact rendered duplicates are rejected. This is not perceptual duplicate detection.
 * `report --ai` asks the local model to interpret available metric samples and propose further experiments. It does not automatically repost videos or publish suggestions.
 * `dashboard.py` is an optional localhost-only review interface. Keep the command-line worker running separately.
+* `profile-import`, `generate`, and `generate-worker` implement the first four automatic reel generation phases: account profiles, footage analysis, AI edit plans, and multi-clip rendering. Start with [GENERATION.md](GENERATION.md). Existing vision-tagged footage remains compatible.
 
 ## Status and limitations
 
 The Instagram adapter uses the container-create/upload/status/publish pattern. Trial request fields and resumable upload compatibility depend on the account, API version and login type. Live publication is an integration to validate with one authorized Trial Reel; no normal-Reel fallback is implemented. The current test suite mocks external API responses and cannot establish actual account eligibility or API acceptance. There is no browser automation, credential scraping, auto-following, unsolicited messaging, or engagement manipulation.
 
-This version creates vertical clips from provided footage, not AI-generated video. It doesn't visually understand raw video, automatically create subtitles, generate imagery, or automatically promote trials itself; use Instagram's own automatic promotion setting if desired. Human approval is required for each live draft. The local model can suggest but cannot execute arbitrary tools or commands.
+This version creates vertical clips from provided footage, not AI-generated video. It analyzes sampled frames and optional speech transcripts, not every frame. It doesn't automatically create synchronized subtitles, generate imagery, retrieve music, or promote trials itself; use Instagram's own automatic promotion setting if desired. Human approval is required for each live draft. The local model can suggest but cannot execute arbitrary tools or commands.
 
 ## Test
 

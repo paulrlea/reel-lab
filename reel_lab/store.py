@@ -30,7 +30,10 @@ class Store:
             video_url TEXT NOT NULL DEFAULT '', mode TEXT);
         CREATE TABLE IF NOT EXISTS metrics (
             job_id INTEGER NOT NULL, age INTEGER NOT NULL, collected TEXT NOT NULL, data TEXT NOT NULL,
-            PRIMARY KEY(job_id,age));''')
+            PRIMARY KEY(job_id,age));
+        CREATE TABLE IF NOT EXISTS generated_plans (
+            job_id INTEGER PRIMARY KEY REFERENCES jobs(id), profile TEXT NOT NULL,
+            profile_json TEXT NOT NULL, plan_json TEXT NOT NULL, sources_json TEXT NOT NULL);''')
 
     @contextmanager
     def transaction(self):
@@ -46,6 +49,26 @@ class Store:
         with self.db:
             cur = self.db.execute('INSERT INTO jobs(path,hash,caption,brief,hypothesis,trial,due,created,video_url) VALUES(?,?,?,?,?,?,?,?,?)', (str(path), digest, caption, brief, hypothesis, trial, scheduled(due), now(), url))
             return cur.lastrowid
+
+    def add_generated(self,path,digest,caption,brief,hypothesis,due,profile,plan,sources,*,allow_reuse=False):
+        with self.transaction():
+            if not allow_reuse and self.used_sources() & {item['sha256'] for item in sources}:
+                raise ValueError('Footage was already used by another generated draft')
+            cur=self.db.execute('INSERT INTO jobs(path,hash,caption,brief,hypothesis,trial,due,created) VALUES(?,?,?,?,?,?,?,?)',
+                (str(path),digest,caption,brief,hypothesis,'MANUAL',scheduled(due),now()))
+            id=cur.lastrowid
+            self.db.execute('INSERT INTO generated_plans VALUES(?,?,?,?,?)',
+                (id,profile['name'],json.dumps(profile),json.dumps(plan),json.dumps(sources)))
+            return id
+
+    def generated(self,id):
+        row=self.db.execute('SELECT * FROM generated_plans WHERE job_id=?',(id,)).fetchone()
+        if not row: return None
+        return {'profile':json.loads(row['profile_json']),'plan':json.loads(row['plan_json']),'sources':json.loads(row['sources_json'])}
+
+    def used_sources(self):
+        return {item['sha256'] for row in self.db.execute('SELECT sources_json FROM generated_plans')
+                for item in json.loads(row['sources_json'])}
 
     def rows(self):
         return [dict(r) for r in self.db.execute('SELECT * FROM jobs ORDER BY id DESC')]

@@ -2,6 +2,7 @@ import argparse
 from datetime import datetime, timezone, timedelta
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
@@ -17,6 +18,9 @@ from .instagram import Instagram
 from .media import render, fingerprint
 from .store import Store, scheduled
 from .worker import tick
+from .profile import Profile, save_profile, load_profile, profiles
+from .generate import generate, fill_queue
+from .director import NoFootage
 
 
 def add_job(c, s, source, brief, caption, due, start, duration, strategy, video_url=''):
@@ -41,14 +45,26 @@ def parser():
     scan = subs.add_parser('tag-footage', help='Catalog incoming video with local vision')
     scan.add_argument('folder')
     scan.add_argument('--watch', action='store_true', help='Keep scanning for new clips')
+    scan.add_argument('--metadata-only', action='store_true', help='Skip vision; use file metadata, text briefs and optional speech')
+    scan.add_argument('--whisper-cli', default=os.environ.get('WHISPER_CLI'))
+    scan.add_argument('--whisper-model', default=os.environ.get('WHISPER_MODEL'))
+    scan.add_argument('--scenes', action='store_true', help='Detect approximate visual transitions on CPU')
     subs.add_parser('footage-tags', help='Export footage labels as JSON')
+    a = subs.add_parser('profile-import', help='Save a creative account profile from a JSON file'); a.add_argument('file')
+    subs.add_parser('profile-list')
+    a = subs.add_parser('profile-show'); a.add_argument('name')
+    a = subs.add_parser('generate', help='Generate a complete multi-clip draft from cataloged footage')
+    a.add_argument('profile'); a.add_argument('--at', required=True); a.add_argument('--allow-reuse', action='store_true')
+    a = subs.add_parser('generate-worker', help='Maintain a small queue of unapproved generated drafts')
+    a.add_argument('profile'); a.add_argument('--max-pending', type=int, default=2)
+    a.add_argument('--spacing-hours', type=float, default=24); a.add_argument('--seconds', type=int, default=180)
     a = subs.add_parser('add', help='Render a source video and create a draft')
     a.add_argument('source'); a.add_argument('--brief', required=True)
     a.add_argument('--caption', help='Skip AI with a supplied caption')
     a.add_argument('--at', required=True, help='ISO 8601 time with UTC offset')
     a.add_argument('--start', type=float, default=0); a.add_argument('--duration', type=float, default=30)
     a.add_argument('--auto-share', action='store_true'); a.add_argument('--video-url', default='')
-    a = subs.add_parser('ingest', help='Create staggered drafts from a folder of MP4 files and matching .txt briefs')
+    a = subs.add_parser('ingest', help='Create staggered drafts from video files and matching .txt briefs')
     a.add_argument('folder'); a.add_argument('--at', required=True); a.add_argument('--spacing-hours', type=float, default=24)
     for name in ('approve','cancel','show','reset-dry','reconcile','edit'):
         a = subs.add_parser(name); a.add_argument('id', type=int)
@@ -74,11 +90,34 @@ def main(argv=None):
         c = Config.load()
         catalog_path = c.data / 'footage.sqlite3'
         if a.cmd == 'tag-footage':
-            return footage.catalog(a.folder, catalog_path, c.ollama_url, watch=a.watch)
+            return footage.catalog(a.folder, catalog_path, c.ollama_url, watch=a.watch, vision=not a.metadata_only,
+                                   whisper_cli=a.whisper_cli,whisper_model=a.whisper_model,scenes=a.scenes)
         if a.cmd == 'footage-tags':
             print(json.dumps(footage.export(catalog_path), indent=2, ensure_ascii=True))
             return 0
+        if a.cmd == 'profile-import':
+            print('Profile saved:',save_profile(c.data,Profile.parse(json.loads(Path(a.file).read_text(encoding='utf-8-sig')))))
+            return 0
+        if a.cmd == 'profile-list':
+            print('\n'.join(profiles(c.data))); return 0
+        if a.cmd == 'profile-show':
+            from dataclasses import asdict
+            print(json.dumps(asdict(load_profile(c.data,a.name)),indent=2,ensure_ascii=False)); return 0
         s = Store(c)
+        if a.cmd == 'generate':
+            print('Generated draft ID:',generate(c,s,load_profile(c.data,a.profile),a.at,allow_reuse=a.allow_reuse)); return 0
+        if a.cmd == 'generate-worker':
+            profile=load_profile(c.data,a.profile)
+            if not 1<=a.max_pending<=10 or not max(1,c.min_interval)<=a.spacing_hours<=168:
+                raise ValueError('Invalid queue target or spacing')
+            print('Generation worker started; creates drafts only. Ctrl-C to stop.',flush=True)
+            while True:
+                try:
+                    id=fill_queue(c,s,profile,a.max_pending,a.spacing_hours)
+                    if id: print('Generated draft ID:',id,flush=True)
+                except NoFootage as exc: logging.info('%s',exc)
+                except Exception as exc: logging.warning('Generation stopped (%s); check logs/configuration',type(exc).__name__)
+                time.sleep(max(30,a.seconds))
         if a.cmd == 'doctor':
             print(f'Data: {c.data}\nMode: {"dry run" if c.dry_run else "live"}\nModel: {c.model}')
             for name in ('ffmpeg','ffprobe','ollama','nvidia-smi'):
@@ -88,7 +127,7 @@ def main(argv=None):
         elif a.cmd == 'ingest':
             if a.spacing_hours < max(1,c.min_interval): raise ValueError('Spacing must meet the minimum interval')
             date = datetime.fromisoformat(scheduled(a.at))
-            for source in sorted(Path(a.folder).glob('*.mp4')):
+            for source in sorted(p for p in Path(a.folder).iterdir() if p.is_file() and p.suffix.lower() in footage.VIDEO_EXTENSIONS):
                 brief_path = source.with_suffix('.txt')
                 if not brief_path.is_file():
                     print('Skipped (missing brief):', source.name); continue
@@ -100,7 +139,7 @@ def main(argv=None):
         elif a.cmd == 'list':
             for j in s.rows(): print(j['id'], j['state'], j['mode'] or '-', j['due'], j['trial'], j['caption'][:70])
         elif a.cmd == 'show':
-            j = s.get(a.id); j.pop('video_url', None); print(json.dumps(j, indent=2, ensure_ascii=False))
+            j = s.get(a.id); j.pop('video_url', None); j['generation']=s.generated(a.id); print(json.dumps(j, indent=2, ensure_ascii=False))
         elif a.cmd == 'approve':
             if not c.dry_run: Instagram(c)
             s.approve(a.id); print('Approved for', 'dry run' if c.dry_run else 'LIVE publishing')

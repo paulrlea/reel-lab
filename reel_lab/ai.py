@@ -8,8 +8,8 @@ def caption_valid(value):
     return value.strip()
 
 
-def chat(config, system, message):
-    response = request(config.ollama_url.rstrip('/') + '/api/chat', method='POST', payload={'model': config.model, 'stream': False, 'think': False, 'format': 'json', 'options': {'num_ctx': 2048, 'temperature': 0.6, 'num_predict': 400}, 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': message}]}, timeout=300)
+def chat(config, system, message, *, context=2048, predict=400, temperature=0.6):
+    response = request(config.ollama_url.rstrip('/') + '/api/chat', method='POST', payload={'model': config.model, 'stream': False, 'think': False, 'format': 'json', 'keep_alive': 0, 'options': {'num_ctx': context, 'temperature': temperature, 'num_predict': predict}, 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': message}]}, timeout=300)
     content = json.loads(response['message']['content'])
     if not isinstance(content, dict):
         raise ValueError('Model must return a JSON object')

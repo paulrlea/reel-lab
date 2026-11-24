@@ -6,12 +6,60 @@ from reel_lab.store import Store
 from reel_lab.cli import add_job
 from reel_lab.ai import caption_valid
 from reel_lab.instagram import Instagram
+from reel_lab.profile import Profile, profiles, load_profile, save_profile
+from reel_lab.generate import generate
+from reel_lab import footage
 
 st.set_page_config(page_title='Reel Lab', layout='wide')
 c = Config.load(); s = Store(c)
 st.title('Reel Lab — Trial Reel Manager')
 st.warning('DRY RUN — no Instagram requests' if c.dry_run else 'LIVE MODE — approved jobs can publish')
 st.caption('Keep this dashboard bound to localhost. Run the worker separately.')
+st.subheader('Account creative profiles')
+existing_profiles=profiles(c.data)
+selected=st.selectbox('Choose a profile to view or edit', ['(new)',*existing_profiles])
+saved=load_profile(c.data,selected) if selected!='(new)' else None
+with st.form('creative-profile-'+selected):
+    name=st.text_input('Profile name (lowercase slug)',value=saved.name if saved else 'my-account')
+    description=st.text_area('Account description',value=saved.description if saved else '',max_chars=1000)
+    audience=st.text_input('Audience',value=saved.audience if saved else '',max_chars=1000)
+    tone=st.text_input('Tone',value=saved.tone if saved else 'Natural and concise',max_chars=1000)
+    categories=st.text_input('Content categories',value=saved.categories if saved else '',max_chars=1000)
+    style=st.text_input('Editing style',value=saved.editing_style if saved else 'Clean, fast-paced cuts',max_chars=1000)
+    music=st.text_input('Music preferences (for a future audio phase)',value=saved.music_preferences if saved else '',max_chars=1000)
+    restricted=st.text_area('Restricted topics / privacy rules',value=saved.restricted_topics if saved else '',max_chars=1000)
+    minimum=st.number_input('Minimum seconds',3,90,saved.min_duration if saved else 7)
+    maximum=st.number_input('Maximum seconds',3,90,saved.max_duration if saved else 30)
+    clips=st.number_input('Maximum clips',1,6,saved.max_clips if saved else 4)
+    hashtags=st.number_input('Maximum hashtags',0,10,saved.max_hashtags if saved else 5)
+    if st.form_submit_button('Save account profile'):
+        try:
+            p=Profile.parse(dict(name=name,description=description,audience=audience,tone=tone,categories=categories,
+                editing_style=style,music_preferences=music,restricted_topics=restricted,min_duration=int(minimum),
+                max_duration=int(maximum),max_clips=int(clips),max_hashtags=int(hashtags)))
+            save_profile(c.data,p); st.rerun()
+        except ValueError as exc: st.error(str(exc))
+
+st.subheader('Automatic reel generation')
+catalog=footage.export(c.data/'footage.sqlite3')
+st.caption(f'{len(catalog)} current footage records; only footage with a description is eligible.')
+with st.expander('Footage catalog'):
+    for item in catalog[:50]:
+        st.write(item.get('summary') or item.get('brief') or item.get('transcript','')[:200] or '(No description)',
+                 f"{item.get('duration_seconds',0):.1f}s",item.get('tags',[]))
+if existing_profiles and catalog:
+    with st.form('generate'):
+        generation_profile=st.selectbox('Account profile',existing_profiles)
+        gen_due=st.text_input('Draft schedule (with timezone)',datetime.now(timezone.utc).isoformat(timespec='seconds'))
+        reuse=st.checkbox('Allow footage already used in previous generated drafts')
+        if st.form_submit_button('Generate Reel draft'):
+            try:
+                with st.spinner('Planning and rendering on this PC...'):
+                    id=generate(c,s,load_profile(c.data,generation_profile),gen_due,allow_reuse=reuse)
+                st.success(f'Generated draft {id}. Review it below.'); st.rerun()
+            except Exception as exc: st.error(f'Generation failed: {str(exc) if isinstance(exc,ValueError) else type(exc).__name__}')
+else:
+    st.info('Save an account profile and run the footage tagger before generating.')
 with st.form('new'):
     st.subheader('Create a draft')
     source = st.text_input('Local video path (owned or authorized content)')
@@ -31,6 +79,10 @@ st.subheader('Queue')
 for j in s.rows():
     with st.expander(f"#{j['id']} • {j['state']} • {j['due']}"):
         st.write(j['caption']); st.write(j['hypothesis']); st.write(j['trial'], j['mode'])
+        generation=s.generated(j['id'])
+        if generation:
+            st.caption('Generated from account: '+generation['profile']['name'])
+            st.json(generation['plan'],expanded=False)
         if j['state'] == 'draft':
             st.video(j['path'])
             with st.form('edit'+str(j['id'])):

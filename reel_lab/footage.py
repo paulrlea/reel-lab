@@ -1,10 +1,10 @@
 """Build a local catalog of incoming footage for future edits."""
 
 import base64
+from contextlib import closing
 from datetime import datetime, timezone
 import json
 import logging
-import math
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from .media import fingerprint
 from .net import request
+from .analysis import probe_video, scene_cuts, transcribe
 
 
 MODEL = 'qwen3-vl:2b'
@@ -21,16 +22,9 @@ SETTLE_SECONDS = 30
 log = logging.getLogger(__name__)
 
 
-def inspect_clip(source, ollama_url):
-    probe = subprocess.check_output(
-        ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-         '-show_entries', 'stream=index:format=duration', '-of', 'json', str(source)],
-        timeout=30,
-    )
-    metadata = json.loads(probe)
-    duration = float(metadata['format']['duration'])
-    if not metadata.get('streams') or not math.isfinite(duration) or duration <= 0:
-        raise ValueError('No usable video stream')
+def inspect_clip(source, ollama_url, metadata=None):
+    metadata = metadata or probe_video(source)
+    duration = metadata['duration_seconds']
     timestamps = [round(duration * fraction, 3) for fraction in (0.15, 0.5, 0.85)]
     inputs = []
     for timestamp in timestamps:
@@ -49,6 +43,7 @@ def inspect_clip(source, ollama_url):
         payload={
             'model': MODEL,
             'stream': False,
+            'keep_alive': 0,
             'think': False,
             'format': 'json',
             'options': {'num_ctx': 3072, 'num_batch': 128, 'num_predict': 350, 'temperature': 0.2},
@@ -69,7 +64,7 @@ def inspect_clip(source, ollama_url):
             not all(isinstance(x, str) and x.strip() for x in frames)):
         raise ValueError('Unexpected vision response')
     return {
-        'duration_seconds': duration,
+        **metadata,
         'summary': summary.strip(),
         'tags': tags,
         'frames': [{'at_seconds': at, 'description': description.strip()}
@@ -77,14 +72,35 @@ def inspect_clip(source, ollama_url):
     }
 
 
-def catalog(folder, database, ollama_url, *, watch=False, interval=30):
+def analyze_clip(source, ollama_url, *, vision=True, whisper_cli=None, whisper_model=None, scenes=False):
+    metadata = probe_video(source)
+    brief_path = Path(source).with_suffix('.txt')
+    brief = brief_path.read_text(encoding='utf-8-sig')[:3000].strip() if brief_path.is_file() else ''
+    transcript = ''
+    if whisper_cli and whisper_model and metadata['has_audio']:
+        transcript = transcribe(source,whisper_cli,whisper_model)
+    labels = {**metadata,'summary':'','tags':[],'frames':[]}
+    if vision:
+        try:
+            labels = inspect_clip(source,ollama_url,metadata)
+        except (OSError, subprocess.SubprocessError, ValueError, RuntimeError, KeyError, TypeError, AttributeError):
+            if not (brief or transcript):
+                raise
+            log.warning('Vision unavailable for %s; using brief/transcript only', Path(source).name)
+    labels.update(brief=brief, transcript=transcript, scene_cuts=scene_cuts(source) if scenes else [], analysis_version=2)
+    return labels
+
+
+def catalog(folder, database, ollama_url, *, watch=False, interval=30, vision=True, whisper_cli=None, whisper_model=None, scenes=False):
     folder = Path(folder).resolve(strict=True)
+    if bool(whisper_cli) != bool(whisper_model):
+        raise ValueError('Provide both whisper CLI and model, or neither')
     endpoint = urlsplit(ollama_url)
-    if endpoint.scheme not in ('http', 'https') or endpoint.hostname not in (
-            '127.0.0.1', 'localhost', '::1'):
+    if vision and (endpoint.scheme not in ('http', 'https') or endpoint.hostname not in (
+            '127.0.0.1', 'localhost', '::1')):
         raise ValueError('Footage tagging requires a loopback Ollama URL')
     failures = {}
-    with sqlite3.connect(database, timeout=30) as db:
+    with closing(sqlite3.connect(database, timeout=30)) as db:
         db.execute('''
             CREATE TABLE IF NOT EXISTS footage (
                 path TEXT PRIMARY KEY, bytes INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
@@ -94,27 +110,31 @@ def catalog(folder, database, ollama_url, *, watch=False, interval=30):
         ''')
         while True:
             for source in sorted(folder.rglob('*')):
-                if source.suffix.lower() not in VIDEO_EXTENSIONS or not source.is_file():
+                if source.suffix.lower() not in VIDEO_EXTENSIONS or not source.is_file() or source.is_symlink():
                     continue
                 try:
                     stat = source.stat()
                     version = (stat.st_size, stat.st_mtime_ns)
                     if not stat.st_size or time.time() - stat.st_mtime < SETTLE_SECONDS:
                         continue
+                    brief_path = source.with_suffix('.txt')
+                    settings = {'version':2,'vision':vision,'whisper_model':str(whisper_model or ''),'scenes':scenes,
+                                'brief_mtime':brief_path.stat().st_mtime_ns if brief_path.is_file() else None}
                     existing = db.execute(
-                        'SELECT bytes, mtime_ns, model FROM footage WHERE path = ?',
+                        'SELECT bytes, mtime_ns, model, labels_json FROM footage WHERE path = ?',
                         (str(source),),
                     ).fetchone()
-                    if existing == (*version, MODEL) or failures.get(source, 0) > time.monotonic():
+                    if (existing and existing[:3] == (*version, MODEL if vision else 'metadata') and json.loads(existing[3]).get('analysis_settings') == settings) or failures.get(source, 0) > time.monotonic():
                         continue
                     sha256 = fingerprint(source)
-                    labels = inspect_clip(source, ollama_url)
+                    labels = analyze_clip(source, ollama_url, vision=vision, whisper_cli=whisper_cli, whisper_model=whisper_model, scenes=scenes)
+                    labels['analysis_settings'] = settings
                     current = source.stat()
                     if (current.st_size, current.st_mtime_ns) != version:
                         continue
                     db.execute(
                         'INSERT OR REPLACE INTO footage VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        (str(source), *version, sha256, MODEL,
+                        (str(source), *version, sha256, MODEL if vision else 'metadata',
                          datetime.now(timezone.utc).isoformat(), json.dumps(labels)),
                     )
                     db.commit()
@@ -132,11 +152,17 @@ def catalog(folder, database, ollama_url, *, watch=False, interval=30):
 def export(database):
     if not database.is_file():
         return []
-    with sqlite3.connect(database) as db:
-        rows = db.execute('SELECT path, sha256, model, tagged_at, labels_json FROM footage ORDER BY path')
-        return [
-            {'path': path, 'sha256': sha256, 'model': model, 'tagged_at': tagged_at,
-             **json.loads(labels)}
-            for path, sha256, model, tagged_at, labels in rows
-            if Path(path).is_file()
-        ]
+    with closing(sqlite3.connect(database)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='footage'").fetchone():
+            return []
+        rows = db.execute('SELECT path, bytes, mtime_ns, sha256, model, tagged_at, labels_json FROM footage ORDER BY tagged_at DESC, path')
+        result = []
+        for path, size, mtime, sha256, model, tagged_at, labels in rows:
+            try:
+                stat = Path(path).stat()
+                if (stat.st_size, stat.st_mtime_ns) != (size,mtime):
+                    continue
+                result.append({**json.loads(labels),'path':path,'sha256':sha256,'model':model,'tagged_at':tagged_at})
+            except OSError:
+                continue
+        return result
