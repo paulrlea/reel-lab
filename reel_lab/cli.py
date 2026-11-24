@@ -16,6 +16,7 @@ from .instagram import Instagram
 from .media import render, fingerprint
 from .store import Store, scheduled
 from .worker import tick
+from .footage import FootageWatcher, videos
 
 
 def add_job(c, s, source, brief, caption, due, start, duration, strategy, video_url=''):
@@ -43,8 +44,11 @@ def parser():
     a.add_argument('--at', required=True, help='ISO 8601 time with UTC offset')
     a.add_argument('--start', type=float, default=0); a.add_argument('--duration', type=float, default=30)
     a.add_argument('--auto-share', action='store_true'); a.add_argument('--video-url', default='')
-    a = subs.add_parser('ingest', help='Create staggered drafts from a folder of MP4 files and matching .txt briefs')
+    a = subs.add_parser('ingest', help='Create staggered drafts from MP4/MOV/M4V files and matching .txt briefs')
     a.add_argument('folder'); a.add_argument('--at', required=True); a.add_argument('--spacing-hours', type=float, default=24)
+    a = subs.add_parser('watch-footage', help='Monitor incoming footage and archive complete files')
+    a.add_argument('--folder', default=None); a.add_argument('--seconds', type=int, default=15); a.add_argument('--settle', type=int, default=30)
+    subs.add_parser('footage', help='List imported originals')
     for name in ('approve','cancel','show','reset-dry','reconcile','edit'):
         a = subs.add_parser(name); a.add_argument('id', type=int)
         if name == 'reconcile': a.add_argument('--media-id', help='Verified Instagram media ID; omit to abandon')
@@ -76,7 +80,7 @@ def main(argv=None):
         elif a.cmd == 'ingest':
             if a.spacing_hours < max(1,c.min_interval): raise ValueError('Spacing must meet the minimum interval')
             date = datetime.fromisoformat(scheduled(a.at))
-            for source in sorted(Path(a.folder).glob('*.mp4')):
+            for source in videos(a.folder):
                 brief_path = source.with_suffix('.txt')
                 if not brief_path.is_file():
                     print('Skipped (missing brief):', source.name); continue
@@ -85,6 +89,15 @@ def main(argv=None):
                     print('Draft ID:', id); date += timedelta(hours=a.spacing_hours)
                 except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
                     print('Skipped:', source.name, type(exc).__name__)
+        elif a.cmd == 'watch-footage':
+            watcher = FootageWatcher(c, a.folder or c.data / 'incoming', a.settle)
+            print(f'Watching {watcher.folder}; originals stay untouched.', flush=True)
+            while True:
+                for path in watcher.scan(): print('Imported:', path, flush=True)
+                time.sleep(max(2,a.seconds))
+        elif a.cmd == 'footage':
+            for path in sorted((c.data / 'footage').glob('*/*')):
+                if path.suffix.lower() in ('.mov','.mp4','.m4v'): print(path)
         elif a.cmd == 'list':
             for j in s.rows(): print(j['id'], j['state'], j['mode'] or '-', j['due'], j['trial'], j['caption'][:70])
         elif a.cmd == 'show':

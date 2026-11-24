@@ -30,6 +30,7 @@ flowchart TD
 ```
 
 * `add` renders one clip and drafts a caption; `ingest` prepares a folder of clips with matching text briefs. The model receives descriptions and prior metric samples, not raw video or account credentials.
+* `watch-footage` monitors a folder receiving iPhone MOV/MP4/M4V files, waits for stable size and modification time, checks copied bytes, and catalogs originals by content hash. See [IPHONE.md](IPHONE.md).
 * `edit`, `approve`, `cancel` and `reset-dry` manage drafts. A draft approved in dry-run mode cannot become a live post merely by switching a flag.
 * `tick` runs one scheduling cycle; `worker` repeats it. An atomic SQLite claim, rolling daily cap and spacing rule limit attempts. Exact rendered duplicates are rejected. This is not perceptual duplicate detection.
 * `report --ai` asks the local model to interpret available metric samples and propose further experiments. It does not automatically repost videos or publish suggestions.
