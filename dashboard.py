@@ -10,6 +10,7 @@ from reel_lab.profile import Profile, profiles, load_profile, save_profile
 from reel_lab.generate import generate
 from reel_lab import footage
 from reel_lab.audio import AudioCatalog, OUTDOOR_ACCOUNTS
+from reel_lab.acquire import register as register_spotdl
 
 st.set_page_config(page_title='Reel Lab', layout='wide')
 c = Config.load(); s = Store(c)
@@ -80,6 +81,21 @@ with st.expander('Outdoor Reel research'):
             try: music_catalog.add_reference(url,account,title,artist,tags,key); st.rerun()
             except ValueError as exc: st.error(str(exc))
     st.dataframe(music_catalog.references())
+with st.expander('Authorize on-demand spotDL acquisition'):
+    st.caption('Only register an exact recording you have permission to download and synchronize with commercial video. No automatic matching from unapproved Instagram tracks.')
+    with st.form('spotdl-track'):
+        spotify=st.text_input('Spotify track URL (without tracking parameters)')
+        youtube=st.text_input('Authorized exact YouTube watch URL')
+        title=st.text_input('Recording title'); artist=st.text_input('Recording artist'); tags=st.text_input('Mood and genre')
+        duration=st.number_input('Expected recording duration (seconds)',3.0,1800.0,180.0)
+        note=st.text_area('Permission to download and commercial synchronization license')
+        rights=st.checkbox('I verified download and commercial synchronization rights for this exact source')
+        ads=st.checkbox('The license also permits advertising')
+        if st.form_submit_button('Register authorized recording'):
+            try:
+                register_spotdl(music_catalog,spotify,youtube,title,artist,tags,note,float(duration),rights_confirmed=rights,ads_eligible=ads); st.rerun()
+            except ValueError as exc: st.error(str(exc))
+    st.caption('Acquisition occurs only if selected, and requires ALLOW_SPOTDL=true and spotDL installed in the Reel Lab environment.')
 with st.expander('Register a licensed local track'):
     with st.form('local-track'):
         path=st.text_input('Local audio file path')
@@ -94,7 +110,7 @@ with st.expander('Register a licensed local track'):
                 music_catalog.register_local(path,title,artist,tags,note,rights_confirmed=rights,ads_eligible=ads,offset=float(offset)); st.rerun()
             except Exception as exc: st.error(f'Import failed: {str(exc) if isinstance(exc,ValueError) else type(exc).__name__}')
     tracks=music_catalog.tracks()
-    st.dataframe([{k:t.get(k) for k in ('key','title','artist','source','tags','duration','bpm','confidence','ads_eligible','enabled')} for t in tracks])
+    st.dataframe([{k:t.get(k) for k in ('key','title','artist','source','provider','tags','duration','bpm','confidence','ads_eligible','enabled')} for t in tracks])
     if tracks:
         with st.form('disable-track'):
             track_key=st.selectbox('Manage a soundtrack',[t['key'] for t in tracks])

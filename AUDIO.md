@@ -68,6 +68,24 @@ Only use `--ads-eligible` if you have verified the license permits advertising. 
 
 The director creates the video editing plan as before. Then the soundtrack selector filters rights, duration, freshness, account, and source settings, ranks tracks using account preferences, footage labels, verified reference observations, general trend recency, and supported performance signals, and asks the local text LLM to choose from the top six eligible candidates. If its choice is invalid or the local music-selection call is unavailable, the highest-ranked eligible candidate is used. The model never receives credentials, local paths, raw audio or permission to supply external track IDs. The exact selection and reason are stored with the draft.
 
+### Optional on-demand spotDL acquisition
+
+For individual recordings you are authorized both to download from the exact source and synchronize with commercial video, Reel Lab can acquire the audio only when it is selected. Install spotDL into the same virtual environment on the deployment PC:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install spotdl
+```
+
+Set `ALLOW_SPOTDL=true` in your private `.env` and choose `local` or `auto` in the account profile. In the dashboard, open **Authorize on-demand spotDL acquisition**. Register the verified Spotify track URL and the exact authorized YouTube recording URL, title, artist, expected duration, and rights note. Confirm download and commercial-use permission, and ads rights separately if applicable. Remove tracking parameters from URLs. The source must be a single recording, not a playlist. spotDL uses YouTube audio with Spotify metadata; using a Spotify link alone does not authorize downloading or advertising use. See [spotDL usage](https://spotdl.readthedocs.io/en/dev/usage/).
+
+Alternatively, use the `audio-spotdl-register` command (replace every placeholder with verified values):
+
+```powershell
+& ".\Reel Lab.cmd" audio-spotdl-register --spotify "SPOTIFY_TRACK_URL" --youtube "AUTHORIZED_YOUTUBE_WATCH_URL" --title "Title" --artist "Artist" --duration 180 --tags "ambient alpine" --license-note "Documented permission and license" --confirm-rights --ads-eligible
+```
+
+Registration does not download anything. The existing selector ranks authorized recordings along with other local music. When it chooses one, spotDL retrieves that exact pinned recording, the app checks the expected track-ID filename and duration (within three seconds), detects beats, records the file hash, and caches it in `data/music-cache`. Later drafts reuse the hash-verified file. Duration and metadata checks are sanity checks, not acoustic fingerprint identification; review the actual soundtrack. A failure stops draft generation rather than selecting an unverified recording. No source is inferred from Instagram-native track IDs, and those tracks remain attached by Meta at publication. No actual music download or commercial license verification is performed by the test suite.
+
 To revoke a track, disable it from the dashboard or use `audio-disable TRACK_KEY`; `audio-enable TRACK_KEY` restores availability only after you have reviewed its rights. Disabling survives native refreshes. It blocks new selection and approval and stops an already-approved soundtrack at the publishing worker. Pause the worker and cancel any pending approved jobs for a revoked track, since the existing worker treats failed live attempts conservatively as uncertain until reconciled.
 
 ### Continuous discovery and generation

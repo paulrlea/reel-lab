@@ -10,6 +10,7 @@ from .store import scheduled
 from .ai import caption_valid
 from .audio import AudioCatalog, choose
 from .beats import snap_plan
+from .acquire import materialize
 
 
 def generate(config, store, profile, due, *, allow_reuse=False):
@@ -19,6 +20,7 @@ def generate(config, store, profile, due, *, allow_reuse=False):
     plan=director.plan(config,profile,available)
     audio=choose(config,store,profile,plan,available,AudioCatalog(config.data)) if profile.audio_mode!='off' else None
     if audio:
+        audio=materialize(config,AudioCatalog(config.data),audio) if audio.get('provider')=='spotdl' else audio
         audio['beat_shifts']=[]
         if audio['source']=='local' and audio['beat_sync'] and audio.get('confidence',0)>=.65:
             plan,audio['beat_shifts']=snap_plan(plan,available,audio['beats'],audio['offset'])

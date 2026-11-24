@@ -201,7 +201,11 @@ def choose(config,store,profile,plan,available,catalog):
         if t['duration']-t['offset']<duration: continue
         if t['source']=='native':
             if not config.allow_native_audio or config.login!='facebook' or t.get('account')!=config.user_id or t['observed']<cutoff or t.get('audio_type')!='music': continue
-        elif not t.get('rights_confirmed') or not Path(t['path']).is_file(): continue
+        elif not t.get('rights_confirmed'): continue
+        elif t.get('provider')=='spotdl':
+            if not config.allow_spotdl: continue
+            if t.get('path') and not Path(t['path']).is_file(): continue
+        elif not Path(t['path']).is_file(): continue
         matches=sum(1 for r in refs if r['track_key']==t['key'] or (r['title'] and r['artist'] and r['title'].casefold()==t['title'].casefold() and r['artist'].casefold()==t['artist'].casefold()))
         score=len(words & _words(t['title']+' '+t['artist']+' '+t['tags']))+min(matches,4)*2+(2 if t['key'] in recent else 0)+(1 if t['source']=='local' else 0)
         signal=performance.get(t['key'],{}).get('mean_interactions_per_view')

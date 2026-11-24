@@ -35,7 +35,7 @@ flowchart TD
 * `report --ai` asks the local model to interpret available metric samples and propose further experiments. It does not automatically repost videos or publish suggestions.
 * `dashboard.py` is an optional localhost-only review interface. Keep the command-line worker running separately.
 * `profile-import`, `generate`, and `generate-worker` implement the first four automatic reel generation phases: account profiles, footage analysis, AI edit plans, and multi-clip rendering. Start with [GENERATION.md](GENERATION.md). Existing vision-tagged footage remains compatible.
-* Phase 5 adds official Instagram music discovery, outdoor Reel reference research, local licensed audio registration, AI soundtrack selection, local mixing and beat-aligned cuts, and same-age music analytics. See [AUDIO.md](AUDIO.md). Native music is opt-in; existing profiles keep music off until configured.
+* Phase 5 adds official Instagram music discovery, outdoor Reel reference research, local licensed audio registration, optional on-demand spotDL acquisition of individually authorized recordings, AI soundtrack selection, local mixing and beat-aligned cuts, and same-age music analytics. See [AUDIO.md](AUDIO.md). Native music and spotDL are opt-in; existing profiles keep music off until configured.
 
 ## Status and limitations
 

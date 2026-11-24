@@ -22,6 +22,7 @@ from .profile import Profile, save_profile, load_profile, profiles
 from .generate import generate, fill_queue
 from .director import NoFootage
 from .audio import AudioCatalog
+from .acquire import register as register_spotdl
 
 
 def add_job(c, s, source, brief, caption, due, start, duration, strategy, video_url=''):
@@ -67,6 +68,10 @@ def parser():
     a = subs.add_parser('audio-import',help='Register a local music file with documented commercial rights')
     a.add_argument('file'); a.add_argument('--title',required=True); a.add_argument('--artist',default=''); a.add_argument('--tags',default='')
     a.add_argument('--license-note',required=True); a.add_argument('--confirm-rights',action='store_true'); a.add_argument('--ads-eligible',action='store_true'); a.add_argument('--offset',type=float,default=0)
+    a = subs.add_parser('audio-spotdl-register',help='Authorize one exact recording for on-demand spotDL acquisition')
+    a.add_argument('--spotify',required=True); a.add_argument('--youtube',required=True); a.add_argument('--title',required=True); a.add_argument('--artist',required=True)
+    a.add_argument('--tags',default=''); a.add_argument('--license-note',required=True); a.add_argument('--duration',type=float,required=True)
+    a.add_argument('--confirm-rights',action='store_true'); a.add_argument('--ads-eligible',action='store_true'); a.add_argument('--offset',type=float,default=0)
     subs.add_parser('audio-list'); subs.add_parser('audio-references'); subs.add_parser('audio-trends')
     a = subs.add_parser('audio-disable',help='Prevent future selection and approval of this soundtrack'); a.add_argument('key')
     a = subs.add_parser('audio-enable',help='Re-enable a soundtrack only after reviewing its rights'); a.add_argument('key')
@@ -126,6 +131,7 @@ def main(argv=None):
             if a.cmd=='audio-discover': result=catalog.discover(c,a.query,a.type)
             elif a.cmd=='audio-refresh': result=catalog.refresh(c,a.query)
             elif a.cmd=='audio-import': result=catalog.register_local(a.file,a.title,a.artist,a.tags,a.license_note,rights_confirmed=a.confirm_rights,ads_eligible=a.ads_eligible,offset=a.offset)
+            elif a.cmd=='audio-spotdl-register': result=register_spotdl(catalog,a.spotify,a.youtube,a.title,a.artist,a.tags,a.license_note,a.duration,rights_confirmed=a.confirm_rights,ads_eligible=a.ads_eligible,offset=a.offset)
             elif a.cmd=='audio-list': result=catalog.tracks()
             elif a.cmd in ('audio-disable','audio-enable'):
                 catalog.set_enabled(a.key,a.cmd=='audio-enable'); result={'key':a.key,'enabled':a.cmd=='audio-enable'}
